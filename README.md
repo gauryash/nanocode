@@ -1,6 +1,8 @@
 # nanocode
 
-Minimal coding agent. Single Python file, zero dependencies, ~500 lines. Uses the [OpenCode Go](https://opencode.ai) API.
+Minimal coding agent. Zero dependencies, ~500 lines. Uses the [OpenCode Go](https://opencode.ai) API.
+
+Install once, then run `nanocode` from **any directory** — no need to `cd` into the project folder.
 
 ![screenshot](screenshot.png)
 
@@ -8,6 +10,9 @@ Minimal coding agent. Single Python file, zero dependencies, ~500 lines. Uses th
 
 - Full agentic loop with tool use (auto-iterates until no more tool calls)
 - Tools: `read`, `write`, `edit`, `glob`, `grep`, `bash`
+- 6 built-in agent personas with file-based prompts (`coder`, `architect`, `reviewer`, `debugger`, `tester`, `refactor`)
+- Per-agent conversation memory — switching agents preserves context for each
+- `/askall` to broadcast a prompt to all agents and collect their responses
 - Conversation history with `/c` to clear
 - Colored terminal output
 - Auto-detects OpenAI vs Anthropic API style based on model family
@@ -15,78 +20,58 @@ Minimal coding agent. Single Python file, zero dependencies, ~500 lines. Uses th
 
 ## Setup
 
-### 1. Create a `.env` file from the example
+### Dev (run from source, no install)
 
 ```bash
-cp .env.example .env
+git clone <repo> && cd nanocode
+cp .env.example .env          # then edit .env with your API key
+python -m nanocode
 ```
 
-Then edit `.env` and replace `your-key` with your real API key from https://opencode.ai.
+`.env` is auto-loaded from CWD.  Env vars take precedence.
 
-> The script accepts either `OPENCODE_GO_API_KEY` **or** `OPENCODE_API_KEY`.
-
-### 2. Load it and run
-
-**Linux / macOS / Git Bash (Windows):**
+### Prod (global install)
 
 ```bash
-set -a && source .env && set +a
-python nanocode.py
+git clone <repo> && cd nanocode
+pip install .
 ```
 
-**Windows Command Prompt (cmd):**
-
-```cmd
-for /f "tokens=*" %i in (.env) do set %i
-python nanocode.py
-```
-
-**Windows PowerShell:**
-
-```powershell
-Get-Content .env | ForEach-Object { if ($_ -match '^([^#].+?)=(.+)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2]) } }
-python nanocode.py
-```
-
-### Or just export/set directly
-
-**Linux / macOS / Git Bash:**
+Then set your key permanently:
 
 ```bash
+# Linux / macOS — add to ~/.bashrc or ~/.zshrc
 export OPENCODE_GO_API_KEY="your-key"
-export MODEL="deepseek-v4-flash"
-export MAX_TOKENS="8192"
-python nanocode.py
+
+# Windows cmd (restart terminal after)
+setx OPENCODE_GO_API_KEY "your-key"
+
+# Windows PowerShell
+[Environment]::SetEnvironmentVariable("OPENCODE_GO_API_KEY", "your-key", "User")
 ```
 
-**Windows cmd:**
+Now run from **any directory**:
 
-```cmd
-set OPENCODE_GO_API_KEY=your-key
-set MODEL=deepseek-v4-flash
-set MAX_TOKENS=8192
-python nanocode.py
+```bash
+nanocode
 ```
 
-**Windows PowerShell:**
-
-```powershell
-$env:OPENCODE_GO_API_KEY="your-key"
-$env:MODEL="deepseek-v4-flash"
-$env:MAX_TOKENS="8192"
-python nanocode.py
-```
+> Accepts `OPENCODE_GO_API_KEY` or `OPENCODE_API_KEY`.  Optional: `MODEL`, `MAX_TOKENS`, `AGENT`, `AGENTS_DIR`.
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `/c` | Clear conversation history |
+| `/c` | Clear all agent conversations |
 | `/q`, `exit` | Quit |
 | `/models` | Fetch and list available OpenCode Go models |
 | `/model` | Show current model |
-| `/model <id\|num>` | Switch model (e.g. `/model deepseek-v4-pro` or `/model 3`) — clears conversation |
-| `/help` | Show help and current model |
+| `/model <id\|num>` | Switch model (e.g. `/model deepseek-v4-pro` or `/model 3`) — clears all conversations |
+| `/agents` | List available agent personas |
+| `/agent` | Show current agent |
+| `/agent <id\|num>` | Switch agent (e.g. `/agent reviewer` or `/agent 3`) |
+| `/askall <prompt>` | Send prompt to all 6 agents and collect their responses |
+| `/help` | Show help, current model, and current agent |
 
 ## Tools
 
@@ -99,10 +84,33 @@ python nanocode.py
 | `grep` | Search files for regex |
 | `bash` | Run shell command (30s timeout) |
 
+## Agents
+
+nanocode ships with 6 agent personas, each with a distinct prompt loaded from `agents/*.md`:
+
+| Agent | File | Role |
+|---|---|---|
+| `coder` | `agents/coder.md` | Concise coding (default) |
+| `architect` | `agents/architect.md` | Design, tradeoffs, structure |
+| `reviewer` | `agents/reviewer.md` | Bug hunting, security, code quality |
+| `debugger` | `agents/debugger.md` | Root-cause analysis, hypothesis testing |
+| `tester` | `agents/tester.md` | Test authoring, edge cases, isolation |
+| `refactor` | `agents/refactor.md` | Improve structure, reduce duplication |
+
+### Customizing agents
+
+Edit the `.md` files directly — changes take effect immediately with no restart. Use `{cwd}` as a placeholder for the current working directory.
+
+To add a new agent, add a `.md` file to the agents directory and register it in `AGENT_FILES` inside `nanocode/cli.py`. Point `AGENTS_DIR` at a different folder to use your own agent library:
+
+```bash
+export AGENTS_DIR="/home/me/my-agents"
+```
+
 ## Example
 
 ```
-nanocode-go | deepseek-v4-flash (openai) | /home/user/project
+nanocode-go | deepseek-v4-flash (openai) | coder | /home/user/project
 
 ──────────────────────────────────────
 > what files are here?
