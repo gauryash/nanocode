@@ -71,6 +71,10 @@ nanocode
 | `/agent` | Show current agent |
 | `/agent <id\|num>` | Switch agent (e.g. `/agent reviewer` or `/agent 3`) |
 | `/askall <prompt>` | Send prompt to all 6 agents and collect their responses |
+| `/sessions` | List saved sessions |
+| `/session` | Show current session ID |
+| `/session new` | Save current session and start a new one |
+| `/session <id>` | Restore a session by ID prefix |
 | `/help` | Show help, current model, and current agent |
 
 ## Tools
@@ -96,6 +100,14 @@ nanocode ships with 6 agent personas, each with a distinct prompt loaded from `a
 | `debugger` | `agents/debugger.md` | Root-cause analysis, hypothesis testing |
 | `tester` | `agents/tester.md` | Test authoring, edge cases, isolation |
 | `refactor` | `agents/refactor.md` | Improve structure, reduce duplication |
+
+## Sessions
+
+Conversations are auto-saved to `.nanocode/sessions/` after each turn. Each session gets a random 10-character hex ID.
+
+- Auto-save on every turn, `/c`, `/session new`, restore, and quit
+- Restore any saved session with `/session <prefix>` — just the first few hex chars is enough
+- Start fresh without losing history with `/session new`
 
 ### Customizing agents
 

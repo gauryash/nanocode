@@ -15,6 +15,10 @@ Commands inside the REPL:
   /agent            show current agent
   /agent <id|num>   switch agent
   /askall <prompt>  send prompt to all agents
+  /sessions         list saved sessions
+  /session          show current session
+  /session new      save & start new session
+  /session <id>     restore session by ID prefix
   /help             show commands
 """
 
@@ -22,6 +26,7 @@ import glob as globlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -29,6 +34,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 # --- inline .env loader (zero deps) ---
 
@@ -63,6 +69,7 @@ MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "8192"))
 
 DEFAULT_AGENT = os.environ.get("AGENT", "coder")
 AGENTS_DIR = os.environ.get("AGENTS_DIR", "agents")
+SESSIONS_DIR = os.path.join(os.getcwd(), ".nanocode", "sessions")
 
 AGENT_FILES = {
     "coder": "coder.md",
@@ -551,6 +558,10 @@ def print_help(current_model, current_agent):
         ("/agent", "show current agent"),
         ("/agent <n>", "switch agent"),
         ("/askall <p>", "send prompt to all agents"),
+        ("/sessions", "list saved sessions"),
+        ("/session", "show current session"),
+        ("/session new", "start new session"),
+        ("/session <id>", "restore session by prefix"),
         ("/help", "show this help"),
     ]
     cw = max(len(c) for c, _ in cmds)
@@ -692,6 +703,75 @@ def run_anthropic_turn(messages, system_prompt, model, agent_id=None):
     return True, time.time() - t0
 
 
+# --- session persistence ---
+
+
+def _ensure_sessions_dir():
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+
+def _new_session_id():
+    return secrets.token_hex(5)  # 10 hex chars
+
+
+def save_session(session_id, conversations, model, agent):
+    _ensure_sessions_dir()
+    path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+    payload = {
+        "id": session_id,
+        "model": model,
+        "agent": agent,
+        "conversations": conversations,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def load_session(session_id):
+    path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data["conversations"], data.get("model"), data.get("agent")
+
+
+def list_sessions():
+    _ensure_sessions_dir()
+    sessions = []
+    for name in os.listdir(SESSIONS_DIR):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(SESSIONS_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            sid = data.get("id", name[:-5])
+            total_msgs = sum(len(v) for v in data.get("conversations", {}).values())
+            sessions.append({
+                "id": sid,
+                "model": data.get("model", "?"),
+                "agent": data.get("agent", "?"),
+                "messages": total_msgs,
+                "updated": data.get("updated_at", "")[:19],
+            })
+        except Exception:
+            sessions.append({"id": name[:-5], "model": "?", "agent": "?", "messages": 0, "updated": ""})
+    sessions.sort(key=lambda s: s["updated"], reverse=True)
+    return sessions
+
+
+def _resolve_session_id(prefix):
+    """Match a session by ID prefix. Returns full id or raises ValueError."""
+    sessions = list_sessions()
+    matches = [s["id"] for s in sessions if s["id"].startswith(prefix)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) == 0:
+        raise ValueError(f"no session matches prefix '{prefix}'")
+    raise ValueError(f"prefix '{prefix}' matches {len(matches)} sessions; be more specific")
+
+
 def choose_model(arg, model_cache):
     arg = strip_opencode_prefix(arg)
     if not model_cache:
@@ -716,6 +796,7 @@ def main():
     model_cache = []
     current_agent = DEFAULT_AGENT if DEFAULT_AGENT in AGENT_FILES else "coder"
     conversations = {agent_id: [] for agent_id in AGENT_FILES}
+    session_id = _new_session_id()
 
     # Bordered header
     agent_color = AGENT_COLORS.get(current_agent, "")
@@ -730,7 +811,8 @@ def main():
     # truncate if too wide
     print(f"{DIM}{_BOX['tl']}{_BOX['h'] * max(1, w - 2)}{_BOX['tr']}{RESET}")
     print(f"{DIM}{_BOX['v']}{RESET} {header}")
-    print(f"{DIM}{_BOX['bl']}{_BOX['h'] * max(1, w - 2)}{_BOX['br']}{RESET}\n")
+    print(f"{DIM}{_BOX['bl']}{_BOX['h'] * max(1, w - 2)}{_BOX['br']}{RESET}")
+    print(f"{DIM}  session {session_id}{RESET}\n")
 
     while True:
         try:
@@ -741,6 +823,7 @@ def main():
                 continue
 
             if user_input in ("/q", "exit"):
+                save_session(session_id, conversations, current_model, current_agent)
                 break
 
             if user_input == "/help":
@@ -749,6 +832,7 @@ def main():
 
             if user_input == "/c":
                 conversations = {agent_id: [] for agent_id in AGENT_FILES}
+                save_session(session_id, conversations, current_model, current_agent)
                 print(f"  {GREEN}✓ Cleared all conversations{RESET}")
                 continue
 
@@ -778,6 +862,56 @@ def main():
                     )
                 else:
                     print(f"  {GRAY}Already using {current_model}{RESET}")
+                continue
+
+            if user_input == "/sessions":
+                sessions = list_sessions()
+                print(_hdr(f"Sessions ({len(sessions)})"))
+                for s in sessions:
+                    marker = "*" if s["id"] == session_id else " "
+                    print(
+                        f"{DIM}{_BOX['v']}{RESET} {marker} {BOLD if marker == '*' else ''}{s['id']}{RESET}"
+                        f"  {GRAY}{s['model']} · {s['agent']} · {s['messages']} msgs"
+                        f" · {s['updated']}{RESET}"
+                    )
+                print(_ftr())
+                continue
+
+            if user_input == "/session":
+                print(f"  {GRAY}Session{RESET}  {BOLD}{session_id}{RESET}")
+                total = sum(len(v) for v in conversations.values())
+                print(f"  {GRAY}Messages{RESET} {total}  {GRAY}Model{RESET} {current_model}  {GRAY}Agent{RESET} {current_agent}")
+                continue
+
+            if user_input == "/session new":
+                save_session(session_id, conversations, current_model, current_agent)
+                session_id = _new_session_id()
+                conversations = {agent_id: [] for agent_id in AGENT_FILES}
+                print(f"  {GREEN}✓ New session{RESET}  {BOLD}{session_id}{RESET}")
+                continue
+
+            if user_input.startswith("/session "):
+                _, raw_sid = user_input.split(maxsplit=1)
+                try:
+                    target_id = _resolve_session_id(raw_sid)
+                    save_session(session_id, conversations, current_model, current_agent)
+                    conversations, restored_model, restored_agent = load_session(target_id)
+                    # Ensure all agent keys exist (backward compat)
+                    for agent_id in AGENT_FILES:
+                        conversations.setdefault(agent_id, [])
+                    session_id = target_id
+                    if restored_model:
+                        current_model = restored_model
+                    if restored_agent and restored_agent in AGENT_FILES:
+                        current_agent = restored_agent
+                    color = AGENT_COLORS.get(current_agent, "")
+                    icon = AGENT_ICONS.get(current_agent, "")
+                    print(f"  {GREEN}✓ Restored{RESET} {BOLD}{session_id}{RESET}"
+                          f" {GRAY}{current_model} · {color}{icon} {current_agent}{RESET}")
+                except ValueError as e:
+                    print(f"  {RED}✗ {e}{RESET}")
+                except Exception as e:
+                    print(f"  {RED}✗ failed to load session: {e}{RESET}")
                 continue
 
             if user_input == "/agents":
@@ -842,6 +976,7 @@ def main():
                     break
 
             _recap_line(current_model, current_agent, len(messages), total_elapsed)
+            save_session(session_id, conversations, current_model, current_agent)
             print()
 
         except (KeyboardInterrupt, EOFError):
