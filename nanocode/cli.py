@@ -73,6 +73,17 @@ AGENT_FILES = {
     "refactor": "refactor.md",
 }
 
+# Per-agent tool allowlists (code-level enforcement).
+# Only coder gets write/edit; all others are read-only.
+AGENT_TOOLS = {
+    "coder":     {"read", "write", "edit", "glob", "grep", "bash"},
+    "architect": {"read", "glob", "grep"},
+    "reviewer":  {"read", "glob", "grep"},
+    "debugger":  {"read", "glob", "grep", "bash"},
+    "tester":    {"read", "glob", "grep"},
+    "refactor":  {"read", "glob", "grep"},
+}
+
 # OpenCode Go docs currently mark these families as Anthropic-compatible /messages.
 ANTHROPIC_COMPAT_MODELS = {
     "minimax-m3",
@@ -362,7 +373,9 @@ TOOLS = {
 }
 
 
-def run_tool(name, args):
+def run_tool(name, args, agent_id=None):
+    if agent_id and agent_id in AGENT_TOOLS and name not in AGENT_TOOLS[agent_id]:
+        return f"error: tool '{name}' is not available for agent '{agent_id}'"
     try:
         return TOOLS[name][2](args)
     except Exception as err:
@@ -387,9 +400,10 @@ def make_properties(params):
     return properties, required
 
 
-def make_anthropic_schema():
+def make_anthropic_schema(allowed_tools=None):
     result = []
-    for name, (description, params, _fn) in TOOLS.items():
+    tools = TOOLS if allowed_tools is None else {k: v for k, v in TOOLS.items() if k in allowed_tools}
+    for name, (description, params, _fn) in tools.items():
         properties, required = make_properties(params)
         result.append(
             {
@@ -405,9 +419,10 @@ def make_anthropic_schema():
     return result
 
 
-def make_openai_schema():
+def make_openai_schema(allowed_tools=None):
     result = []
-    for name, (description, params, _fn) in TOOLS.items():
+    tools = TOOLS if allowed_tools is None else {k: v for k, v in TOOLS.items() if k in allowed_tools}
+    for name, (description, params, _fn) in tools.items():
         properties, required = make_properties(params)
         result.append(
             {
@@ -468,24 +483,24 @@ def fetch_models():
     return [item["id"] for item in response.get("data", [])]
 
 
-def call_openai_api(messages, system_prompt, model):
+def call_openai_api(messages, system_prompt, model, allowed_tools=None):
     payload = {
         "model": strip_opencode_prefix(model),
         "max_tokens": MAX_TOKENS,
         "messages": [{"role": "system", "content": system_prompt}] + messages,
-        "tools": make_openai_schema(),
+        "tools": make_openai_schema(allowed_tools),
         "tool_choice": "auto",
     }
     return http_json(CHAT_COMPLETIONS_URL, payload, auth_headers(require_key=True))
 
 
-def call_anthropic_api(messages, system_prompt, model):
+def call_anthropic_api(messages, system_prompt, model, allowed_tools=None):
     payload = {
         "model": strip_opencode_prefix(model),
         "max_tokens": MAX_TOKENS,
         "system": system_prompt,
         "messages": messages,
-        "tools": make_anthropic_schema(),
+        "tools": make_anthropic_schema(allowed_tools),
     }
     headers = auth_headers(require_key=True, extra={"anthropic-version": "2023-06-01"})
     return http_json(MESSAGES_URL, payload, headers)
@@ -606,9 +621,10 @@ def parse_tool_args(raw):
         return {}
 
 
-def run_openai_turn(messages, system_prompt, model):
+def run_openai_turn(messages, system_prompt, model, agent_id=None):
+    allowed_tools = AGENT_TOOLS.get(agent_id) if agent_id else None
     t0 = time.time()
-    response = call_openai_api(messages, system_prompt, model)
+    response = call_openai_api(messages, system_prompt, model, allowed_tools)
     message = response.get("choices", [{}])[0].get("message", {})
 
     content = message.get("content") or ""
@@ -629,7 +645,7 @@ def run_openai_turn(messages, system_prompt, model):
         tool_name = function.get("name", "")
         tool_args = parse_tool_args(function.get("arguments"))
         print_tool_call(tool_name, tool_args)
-        result = run_tool(tool_name, tool_args)
+        result = run_tool(tool_name, tool_args, agent_id)
         print_tool_result(tool_name, tool_args, result)
         messages.append(
             {
@@ -642,9 +658,10 @@ def run_openai_turn(messages, system_prompt, model):
     return True, time.time() - t0
 
 
-def run_anthropic_turn(messages, system_prompt, model):
+def run_anthropic_turn(messages, system_prompt, model, agent_id=None):
+    allowed_tools = AGENT_TOOLS.get(agent_id) if agent_id else None
     t0 = time.time()
-    response = call_anthropic_api(messages, system_prompt, model)
+    response = call_anthropic_api(messages, system_prompt, model, allowed_tools)
     content_blocks = response.get("content", [])
     tool_results = []
 
@@ -656,7 +673,7 @@ def run_anthropic_turn(messages, system_prompt, model):
             tool_name = block.get("name", "")
             tool_args = block.get("input", {})
             print_tool_call(tool_name, tool_args)
-            result = run_tool(tool_name, tool_args)
+            result = run_tool(tool_name, tool_args, agent_id)
             print_tool_result(tool_name, tool_args, result)
             tool_results.append(
                 {
@@ -801,9 +818,9 @@ def main():
                     while True:
                         kind = endpoint_kind(current_model)
                         if kind == "anthropic":
-                            has_more_tools, _ = run_anthropic_turn(messages, system_prompt, current_model)
+                            has_more_tools, _ = run_anthropic_turn(messages, system_prompt, current_model, agent_id)
                         else:
-                            has_more_tools, _ = run_openai_turn(messages, system_prompt, current_model)
+                            has_more_tools, _ = run_openai_turn(messages, system_prompt, current_model, agent_id)
                         if not has_more_tools:
                             break
                 print(f"\n{_ftr()}")
@@ -817,9 +834,9 @@ def main():
             while True:
                 kind = endpoint_kind(current_model)
                 if kind == "anthropic":
-                    has_more_tools, elapsed = run_anthropic_turn(messages, system_prompt, current_model)
+                    has_more_tools, elapsed = run_anthropic_turn(messages, system_prompt, current_model, current_agent)
                 else:
-                    has_more_tools, elapsed = run_openai_turn(messages, system_prompt, current_model)
+                    has_more_tools, elapsed = run_openai_turn(messages, system_prompt, current_model, current_agent)
                 total_elapsed += elapsed
                 if not has_more_tools:
                     break
