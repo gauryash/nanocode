@@ -1,69 +1,117 @@
 # nanocode
 
-Minimal Claude Code alternative. Single Python file, zero dependencies, ~250 lines.
-
-Built using Claude Code, then used to build itself.
+Minimal coding agent. Single Python file, zero dependencies, ~500 lines. Uses the [OpenCode Go](https://opencode.ai) API.
 
 ![screenshot](screenshot.png)
 
 ## Features
 
-- Full agentic loop with tool use
+- Full agentic loop with tool use (auto-iterates until no more tool calls)
 - Tools: `read`, `write`, `edit`, `glob`, `grep`, `bash`
-- Conversation history
+- Conversation history with `/c` to clear
 - Colored terminal output
+- Auto-detects OpenAI vs Anthropic API style based on model family
+- Switch models in-session with `/model`
 
-## Usage
+## Setup
+
+### 1. Create a `.env` file from the example
 
 ```bash
-export ANTHROPIC_API_KEY="your-key"
+cp .env.example .env
+```
+
+Then edit `.env` and replace `your-key` with your real API key from https://opencode.ai.
+
+> The script accepts either `OPENCODE_GO_API_KEY` **or** `OPENCODE_API_KEY`.
+
+### 2. Load it and run
+
+**Linux / macOS / Git Bash (Windows):**
+
+```bash
+set -a && source .env && set +a
 python nanocode.py
 ```
 
-### OpenRouter
+**Windows Command Prompt (cmd):**
 
-Use [OpenRouter](https://openrouter.ai) to access any model:
-
-```bash
-export OPENROUTER_API_KEY="your-key"
+```cmd
+for /f "tokens=*" %i in (.env) do set %i
 python nanocode.py
 ```
 
-To use a different model:
+**Windows PowerShell:**
+
+```powershell
+Get-Content .env | ForEach-Object { if ($_ -match '^([^#].+?)=(.+)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2]) } }
+python nanocode.py
+```
+
+### Or just export/set directly
+
+**Linux / macOS / Git Bash:**
 
 ```bash
-export OPENROUTER_API_KEY="your-key"
-export MODEL="openai/gpt-5.2"
+export OPENCODE_GO_API_KEY="your-key"
+export MODEL="deepseek-v4-flash"
+export MAX_TOKENS="8192"
+python nanocode.py
+```
+
+**Windows cmd:**
+
+```cmd
+set OPENCODE_GO_API_KEY=your-key
+set MODEL=deepseek-v4-flash
+set MAX_TOKENS=8192
+python nanocode.py
+```
+
+**Windows PowerShell:**
+
+```powershell
+$env:OPENCODE_GO_API_KEY="your-key"
+$env:MODEL="deepseek-v4-flash"
+$env:MAX_TOKENS="8192"
 python nanocode.py
 ```
 
 ## Commands
 
-- `/c` - Clear conversation
-- `/q` or `exit` - Quit
+| Command | Description |
+|---|---|
+| `/c` | Clear conversation history |
+| `/q`, `exit` | Quit |
+| `/models` | Fetch and list available OpenCode Go models |
+| `/model` | Show current model |
+| `/model <id\|num>` | Switch model (e.g. `/model deepseek-v4-pro` or `/model 3`) — clears conversation |
+| `/help` | Show help and current model |
 
 ## Tools
 
 | Tool | Description |
-|------|-------------|
+|---|---|
 | `read` | Read file with line numbers, offset/limit |
 | `write` | Write content to file |
-| `edit` | Replace string in file (must be unique) |
+| `edit` | Replace string in file (must be unique unless `all=true`) |
 | `glob` | Find files by pattern, sorted by mtime |
 | `grep` | Search files for regex |
-| `bash` | Run shell command |
+| `bash` | Run shell command (30s timeout) |
 
 ## Example
 
 ```
-────────────────────────────────────────
-❯ what files are here?
-────────────────────────────────────────
+nanocode-go | deepseek-v4-flash (openai) | /home/user/project
 
-⏺ Glob(**/*.py)
-  ⎿  nanocode.py
+──────────────────────────────────────
+> what files are here?
+──────────────────────────────────────
 
-⏺ There's one Python file: nanocode.py
+> glob(**/*.py)
+  `- nanocode.py
+
+> There's one Python file: nanocode.py
 ```
 
 ## License

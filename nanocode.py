@@ -254,7 +254,7 @@ def endpoint_kind(model):
 def auth_headers(require_key=True, extra=None):
     if require_key and not OPENCODE_GO_KEY:
         raise RuntimeError("Set OPENCODE_GO_API_KEY before making model requests.")
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "User-Agent": "nanocode-go/1.0"}
     if OPENCODE_GO_KEY:
         headers["Authorization"] = f"Bearer {OPENCODE_GO_KEY}"
     if extra:
