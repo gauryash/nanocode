@@ -22,7 +22,6 @@ Commands inside the REPL:
   /help             show commands
 """
 
-import glob as globlib
 import json
 import os
 import re
@@ -36,24 +35,38 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
+from pathlib import Path
+
+from nanocode.permission import PermissionManager
+from nanocode.permission.fs_wrapper import FileSystemWrapper
+
+# Framework-global FileSystemWrapper (trusted — used for NanoCode's own files)
+_fs: FileSystemWrapper = FileSystemWrapper()
+
 # --- inline .env loader (zero deps) ---
 
 
 def _load_dotenv(path=".env"):
-    """Load KEY=VALUE pairs from a .env file.  Does NOT override existing env vars."""
+    """Load KEY=VALUE pairs from a .env file.  Does NOT override existing env vars.
+
+    This is a framework operation (not an agent action).
+    """
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                key, value = key.strip(), value.strip()
-                if key and key not in os.environ:
-                    os.environ[key] = value
+        env_path = Path(path).resolve()
+        content = _fs.read_text(env_path)
+        for line in content.split("\n"):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value
     except FileNotFoundError:
+        pass
+    except OSError:
         pass
 
 
@@ -213,6 +226,23 @@ def _spinner_stop():
     time.sleep(0.05)  # let thread clear the line
 
 
+# Global PermissionManager instance (initialized at startup).
+# Every filesystem operation must route through this.
+_pm: PermissionManager | None = None
+
+
+def init_permission_manager():
+    """Initialize the global PermissionManager from the CWD."""
+    global _pm
+    _pm = PermissionManager(Path.cwd())
+    return _pm
+
+
+def get_permission_manager() -> PermissionManager:
+    assert _pm is not None, "PermissionManager not initialized"
+    return _pm
+
+
 # --- Agent prompt system ---
 
 
@@ -220,10 +250,10 @@ def load_agent_prompt(agent_id):
     if agent_id not in AGENT_FILES:
         raise ValueError(f"unknown agent {agent_id!r}")
 
-    path = os.path.join(AGENTS_DIR, AGENT_FILES[agent_id])
+    path = Path(AGENTS_DIR) / AGENT_FILES[agent_id]
 
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        template = f.read()
+    # Agent prompts are framework operations inside the workspace
+    template = _fs.read_text(path)
 
     return template.format(cwd=os.getcwd())
 
@@ -278,87 +308,69 @@ def choose_agent(arg):
 
 
 def read(args):
-    with open(args["path"], "r", encoding="utf-8", errors="replace") as f:
-        lines = f.readlines()
+    pm = get_permission_manager()
+    path = args["path"]
     offset = int(args.get("offset", 0))
-    limit = int(args.get("limit", len(lines)))
-    selected = lines[offset : offset + limit]
-    return "".join(f"{offset + idx + 1:4}| {line}" for idx, line in enumerate(selected))
+    limit = int(args["limit"]) if args.get("limit") is not None else None
+    try:
+        return pm.read_text(path, reason="Agent requested file read", offset=offset, limit=limit)
+    except PermissionError as e:
+        return f"error: {e}"
 
 
 def write(args):
-    with open(args["path"], "w", encoding="utf-8") as f:
-        f.write(args["content"])
-    return "ok"
+    pm = get_permission_manager()
+    path = args["path"]
+    content = args["content"]
+    try:
+        pm.write_text(path, content, reason="Agent requested file write")
+        return "ok"
+    except PermissionError as e:
+        return f"error: {e}"
 
 
 def edit(args):
-    with open(args["path"], "r", encoding="utf-8", errors="replace") as f:
-        text = f.read()
-    old, new = args["old"], args["new"]
-    if old not in text:
-        return "error: old_string not found"
-    count = text.count(old)
-    if not args.get("all") and count > 1:
-        return f"error: old_string appears {count} times, must be unique (use all=true)"
-    replacement = text.replace(old, new) if args.get("all") else text.replace(old, new, 1)
-    with open(args["path"], "w", encoding="utf-8") as f:
-        f.write(replacement)
-    return "ok"
+    pm = get_permission_manager()
+    path = args["path"]
+    old = args["old"]
+    new = args["new"]
+    all_occurrences = args.get("all", False)
+    try:
+        return pm.edit_text(path, old, new, all_occurrences, reason="Agent requested file edit")
+    except PermissionError as e:
+        return f"error: {e}"
 
 
 def glob(args):
-    pattern = (args.get("path", ".") + "/" + args["pat"]).replace("//", "/")
-    files = globlib.glob(pattern, recursive=True)
-    files = sorted(
-        files,
-        key=lambda f: os.path.getmtime(f) if os.path.isfile(f) else 0,
-        reverse=True,
-    )
-    return "\n".join(files) or "none"
+    pm = get_permission_manager()
+    pattern = args["pat"]
+    root = args.get("path", ".")
+    try:
+        return pm.glob(pattern, root, reason="Agent requested file search")
+    except PermissionError as e:
+        return f"error: {e}"
 
 
 def grep(args):
-    pattern = re.compile(args["pat"])
-    hits = []
+    pm = get_permission_manager()
+    pattern = args["pat"]
     root = args.get("path", ".")
-    for filepath in globlib.glob(root + "/**", recursive=True):
-        if not os.path.isfile(filepath):
-            continue
-        try:
-            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                for line_num, line in enumerate(f, 1):
-                    if pattern.search(line):
-                        hits.append(f"{filepath}:{line_num}:{line.rstrip()}")
-                        if len(hits) >= 50:
-                            return "\n".join(hits)
-        except Exception:
-            pass
-    return "\n".join(hits) or "none"
+    try:
+        return pm.grep(pattern, root, reason="Agent requested text search")
+    except PermissionError as e:
+        return f"error: {e}"
 
 
 def bash(args):
-    proc = subprocess.Popen(
-        args["cmd"],
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    output_lines = []
+    pm = get_permission_manager()
+    command = args["cmd"]
     try:
-        while True:
-            line = proc.stdout.readline()
-            if not line and proc.poll() is not None:
-                break
-            if line:
-                print(f"  {DIM}{_BOX['v']}{RESET} {line.rstrip()}", flush=True)
-                output_lines.append(line)
-        proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        output_lines.append("\n(timed out after 30s)")
-    return "".join(output_lines).strip() or "(empty)"
+        def stream(line):
+            print(f"  {DIM}{_BOX['v']}{RESET} {line}", flush=True)
+        result = pm.run_command(command, reason="Agent requested shell command", line_callback=stream)
+        return result
+    except PermissionError as e:
+        return f"error: {e}"
 
 
 # --- Tool definitions: (description, schema, function) ---
@@ -724,7 +736,7 @@ def run_anthropic_turn(messages, system_prompt, model, agent_id=None):
 
 
 def _ensure_sessions_dir():
-    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    _fs.ensure_dir(Path(SESSIONS_DIR))
 
 
 def _new_session_id():
@@ -733,7 +745,7 @@ def _new_session_id():
 
 def save_session(session_id, conversations, model, agent):
     _ensure_sessions_dir()
-    path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+    path = Path(SESSIONS_DIR) / f"{session_id}.json"
     payload = {
         "id": session_id,
         "model": model,
@@ -742,28 +754,30 @@ def save_session(session_id, conversations, model, agent):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
+    content = json.dumps(payload, indent=2, ensure_ascii=False)
+    _fs.write_text(path, content)
 
 
 def load_session(session_id):
-    path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    path = Path(SESSIONS_DIR) / f"{session_id}.json"
+    content = _fs.read_text(path)
+    data = json.loads(content)
     return data["conversations"], data.get("model"), data.get("agent")
 
 
 def list_sessions():
     _ensure_sessions_dir()
     sessions = []
-    for name in os.listdir(SESSIONS_DIR):
-        if not name.endswith(".json"):
+    sessions_path = Path(SESSIONS_DIR)
+    if not sessions_path.exists():
+        return sessions
+    for entry in sessions_path.iterdir():
+        if not entry.name.endswith(".json"):
             continue
-        path = os.path.join(SESSIONS_DIR, name)
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            sid = data.get("id", name[:-5])
+            content = _fs.read_text(entry)
+            data = json.loads(content)
+            sid = data.get("id", entry.stem)
             total_msgs = sum(len(v) for v in data.get("conversations", {}).values())
             sessions.append({
                 "id": sid,
@@ -773,7 +787,7 @@ def list_sessions():
                 "updated": data.get("updated_at", "")[:19],
             })
         except Exception:
-            sessions.append({"id": name[:-5], "model": "?", "agent": "?", "messages": 0, "updated": ""})
+            sessions.append({"id": entry.stem, "model": "?", "agent": "?", "messages": 0, "updated": ""})
     sessions.sort(key=lambda s: s["updated"], reverse=True)
     return sessions
 
@@ -814,6 +828,10 @@ def main():
     current_agent = DEFAULT_AGENT if DEFAULT_AGENT in AGENT_FILES else "coder"
     conversations = {agent_id: [] for agent_id in AGENT_FILES}
     session_id = _new_session_id()
+
+    # Initialize the Permission Manager — this is the security boundary.
+    # All subsequent filesystem operations must pass through this.
+    init_permission_manager()
 
     # Bordered header
     agent_color = AGENT_COLORS.get(current_agent, "")
