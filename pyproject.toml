@@ -23,6 +23,9 @@ classifiers = [
     "Topic :: Software Development :: Build Tools",
 ]
 
+[tool.setuptools.package-data]
+nanocode = ["system.md"]
+
 [project.scripts]
 nanocode = "nanocode.cli:main"
 nanocode-go = "nanocode.cli:main"

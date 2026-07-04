@@ -77,6 +77,23 @@ nanocode
 | `/session <id>` | Restore a session by ID prefix |
 | `/help` | Show help, current model, and current agent |
 
+## System prompt
+
+nanocode supports a two-tier prompt system:
+
+- **`nanocode/system.md`** — base system prompt (shared across all agents). Sets global behavior and model-level instructions.
+- **`agents/*.md`** — agent-specific prompts loaded per persona.
+
+The two are combined at runtime: system prompt first, then agent prompt. This lets you keep common instructions in one place.
+
+Customize with the `SYSTEM_PROMPT_PATH` environment variable:
+
+```bash
+export SYSTEM_PROMPT_PATH="/home/me/custom-system.md"
+```
+
+If the system prompt file doesn't exist, nanocode falls back to the agent prompt alone (backward compatible).
+
 ## Tools
 
 | Tool | Description |

@@ -70,6 +70,10 @@ MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "8192"))
 DEFAULT_AGENT = os.environ.get("AGENT", "coder")
 AGENTS_DIR = os.environ.get("AGENTS_DIR", "agents")
 SESSIONS_DIR = os.path.join(os.getcwd(), ".nanocode", "sessions")
+SYSTEM_PROMPT_PATH = os.environ.get(
+    "SYSTEM_PROMPT_PATH",
+    os.path.join(os.path.dirname(__file__), "system.md")
+)
 
 AGENT_FILES = {
     "coder": "coder.md",
@@ -228,8 +232,21 @@ def list_agents():
     return list(AGENT_FILES.keys())
 
 
+def load_system_prompt():
+    """Load the base system prompt from nanocode/system.md (optional)."""
+    try:
+        with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
 def agent_system_prompt(agent_id):
-    return load_agent_prompt(agent_id)
+    agent_prompt = load_agent_prompt(agent_id)
+    system_prompt = load_system_prompt()
+    if system_prompt:
+        return system_prompt + "\n\n" + agent_prompt
+    return agent_prompt
 
 
 def print_agents(current_agent):
