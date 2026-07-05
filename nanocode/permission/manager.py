@@ -16,6 +16,8 @@ from nanocode.permission.permission_store import PermissionStore
 from nanocode.permission.permission_prompt import PermissionPrompt
 from nanocode.permission.fs_wrapper import FileSystemWrapper
 
+# Max shell command length (configurable via env)
+MAX_COMMAND_LENGTH = int(os.environ.get("NANOCODE_MAX_CMD_LENGTH", "8192"))
 
 # Patterns that suggest a shell command is referencing an external path.
 # This is a best-effort heuristic, not a security boundary.
@@ -32,6 +34,21 @@ _TRAVERSAL_PATTERNS = re.compile(
 _SENSITIVE_REF_PATTERNS = re.compile(
     r'(?:~[/\\])?(?:\.ssh|\.aws|\.gcp|\.config|\.kube|AppData|Application Data|'
     r'Users[/\\]\w+[/\\]|home[/\\]\w+[/\\])'
+)
+
+# Destructive command patterns blocked unconditionally.
+_DESTRUCTIVE_PATTERNS = re.compile(
+    r'(?:^|\s)(?:'
+    r'rm\s+-[rfRF]{1,2}\s+[/\\]|'              # rm -rf /  (any flag combo)
+    r'dd\s+if=|'                               # dd if=/dev/sda
+    r'>\s*/dev/sd|'                            # redirect to block device
+    r'mkfs\.|'                                 # format filesystem
+    r':\(\)\s*\{|'                             # fork bomb
+    r'chmod\s+-R\s+0{4}\s+/|'                  # chmod -R 0000 /
+    r'(?:wget|curl)\s+.*\s*\||'                # fetch and pipe to shell
+    r'bash\s+<(?:curl|wget)|'                   # fetch and exec
+    r'sh\s+-c\s+"\s*rm\s+-[rfRF]{1,2}'         # sh -c "rm -rf"  
+    r')\s*'
 )
 
 
@@ -162,6 +179,14 @@ class PermissionManager:
         If the command references a path outside the workspace (heuristic),
         the user is prompted for permission.
         """
+        # Enforce max command length
+        if len(command) > MAX_COMMAND_LENGTH:
+            return f"(denied: command exceeds {MAX_COMMAND_LENGTH} character limit)"
+
+        # Block destructive patterns unconditionally
+        if _DESTRUCTIVE_PATTERNS.search(command):
+            return "(denied: command matches a destructive pattern and was blocked)"
+
         # Best-effort check for external path references
         if _TRAVERSAL_PATTERNS.search(command) or _SENSITIVE_REF_PATTERNS.search(command):
             decision = self._prompt_external_command(command, reason)

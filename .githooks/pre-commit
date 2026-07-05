@@ -1,0 +1,14 @@
+#!/bin/sh
+# Pre-commit hook: scan staged changes for secrets.
+# Install: git config core.hooksPath .githooks
+
+echo "--- Scanning for secrets in staged changes... ---"
+python scripts/scan-secrets.py
+if [ $? -ne 0 ]; then
+    echo "!!! Commit blocked: potential secrets detected."
+    echo "    Review the findings above. If this is a false positive,"
+    echo "    use 'git commit --no-verify' to bypass."
+    exit 1
+fi
+echo "--- No secrets found. ---"
+exit 0

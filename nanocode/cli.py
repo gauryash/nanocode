@@ -79,6 +79,7 @@ MESSAGES_URL = "https://opencode.ai/zen/go/v1/messages"
 DEFAULT_MODEL = "deepseek-v4-flash"
 MODEL = os.environ.get("MODEL", DEFAULT_MODEL)
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "8192"))
+HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "60"))
 
 DEFAULT_AGENT = os.environ.get("AGENT", "coder")
 AGENTS_DIR = os.environ.get("AGENTS_DIR", "agents")
@@ -265,8 +266,7 @@ def list_agents():
 def load_system_prompt():
     """Load the base system prompt from nanocode/system.md (optional)."""
     try:
-        with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8", errors="replace") as f:
-            return f.read().strip()
+        return _fs.read_text(Path(SYSTEM_PROMPT_PATH)).strip()
     except FileNotFoundError:
         return ""
 
@@ -409,9 +409,48 @@ TOOLS = {
 }
 
 
+def validate_tool_args(name, args):
+    """Validate *args* against the declared schema for tool *name*.
+    
+    Returns an error string or None if valid.
+    """
+    if name not in TOOLS:
+        return f"unknown tool '{name}'"
+
+    _desc, params, _fn = TOOLS[name]
+    for param_name, param_type in params.items():
+        is_optional = param_type.endswith("?")
+        if param_name not in args:
+            if not is_optional:
+                return f"missing required argument '{param_name}' for tool '{name}'"
+            continue
+
+        value = args[param_name]
+        base_type = param_type.rstrip("?")
+
+        if base_type == "string":
+            if not isinstance(value, str):
+                return f"argument '{param_name}' for tool '{name}' must be a string, got {type(value).__name__}"
+        elif base_type == "number":
+            if not isinstance(value, (int, float)):
+                return f"argument '{param_name}' for tool '{name}' must be a number, got {type(value).__name__}"
+        elif base_type == "boolean":
+            if not isinstance(value, bool):
+                return f"argument '{param_name}' for tool '{name}' must be a boolean, got {type(value).__name__}"
+
+    for key in args:
+        if key not in params:
+            return f"unexpected argument '{key}' for tool '{name}'"
+
+    return None
+
+
 def run_tool(name, args, agent_id=None):
     if agent_id and agent_id in AGENT_TOOLS and name not in AGENT_TOOLS[agent_id]:
         return f"error: tool '{name}' is not available for agent '{agent_id}'"
+    error = validate_tool_args(name, args)
+    if error:
+        return f"error: {error}"
     try:
         return TOOLS[name][2](args)
     except Exception as err:
@@ -505,11 +544,13 @@ def http_json(url, payload=None, headers=None):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(url, data=data, headers=headers or {})
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as err:
             body = err.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"HTTP {err.code}: {body}") from err
+        except urllib.error.URLError as err:
+            raise RuntimeError(f"Request failed (timeout={HTTP_TIMEOUT}s): {err.reason}") from err
     finally:
         _spinner_stop()
 
