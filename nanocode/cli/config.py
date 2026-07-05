@@ -10,12 +10,14 @@ import os
 from pathlib import Path
 
 from nanocode.permission.fs_wrapper import FileSystemWrapper
+from nanocode.cli.skill_loader import discover_skills, build_skill_config
 
 __all__ = [
     "_fs", "_get_api_key",
     "MODELS_URL", "CHAT_COMPLETIONS_URL", "MESSAGES_URL",
     "DEFAULT_MODEL", "MODEL", "MAX_TOKENS", "HTTP_TIMEOUT",
-    "DEFAULT_AGENT", "AGENTS_DIR", "SESSIONS_DIR", "SYSTEM_PROMPT_PATH",
+    "SESSIONS_DIR", "SYSTEM_PROMPT_PATH",
+    "SKILLS_DIR",
     "AGENT_FILES", "AGENT_TOOLS", "ANTHROPIC_COMPAT_MODELS",
     "_PACKAGE_DIR",
 ]
@@ -82,31 +84,18 @@ MODEL = os.environ.get("MODEL", DEFAULT_MODEL)
 MAX_TOKENS = _env_int("MAX_TOKENS", 8192)
 HTTP_TIMEOUT = _env_int("HTTP_TIMEOUT", 60)
 
-DEFAULT_AGENT = os.environ.get("AGENT", "coder")
-AGENTS_DIR = os.environ.get("AGENTS_DIR", "agents")
 SESSIONS_DIR = os.path.join(os.getcwd(), ".nanocode", "sessions")
 SYSTEM_PROMPT_PATH = os.environ.get(
     "SYSTEM_PROMPT_PATH",
     str(_PACKAGE_DIR / "system.md"),
 )
 
-AGENT_FILES: dict[str, str] = {
-    "coder": "coder.md",
-    "architect": "architect.md",
-    "reviewer": "reviewer.md",
-    "debugger": "debugger.md",
-    "tester": "tester.md",
-    "refactor": "refactor.md",
-}
+SKILLS_DIR = os.environ.get("SKILLS_DIR", "skills")
 
-AGENT_TOOLS: dict[str, set[str]] = {
-    "coder":     {"read", "write", "edit", "glob", "grep", "bash"},
-    "architect": {"read", "glob", "grep"},
-    "reviewer":  {"read", "glob", "grep"},
-    "debugger":  {"read", "glob", "grep", "bash"},
-    "tester":    {"read", "glob", "grep"},
-    "refactor":  {"read", "glob", "grep"},
-}
+_skills = discover_skills(SKILLS_DIR)
+AGENT_FILES: dict[str, str]
+AGENT_TOOLS: dict[str, set[str]]
+AGENT_FILES, AGENT_TOOLS = build_skill_config(_skills)
 
 ANTHROPIC_COMPAT_MODELS: set[str] = {
     "minimax-m3",

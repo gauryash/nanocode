@@ -116,6 +116,10 @@ def _bash(args: dict) -> ToolResult:
         return Err(str(e))
 
 
+def _stub_unavailable(args: dict) -> ToolResult:
+    return Ok("(not available in this environment)")
+
+
 # --- Tool definitions ---
 
 TOOLS: dict[str, ToolDef] = {
@@ -148,6 +152,21 @@ TOOLS: dict[str, ToolDef] = {
         "Run shell command",
         {"cmd": "string"},
         _bash,
+    ),
+    "intercom": ToolDef(
+        "Send a message to another agent (stub — not available in single-agent mode)",
+        {"message": "string", "target": "string?"},
+        _stub_unavailable,
+    ),
+    "contact_supervisor": ToolDef(
+        "Contact a supervisor agent for decisions (stub — not available in single-agent mode)",
+        {"reason": "string", "message": "string?"},
+        _stub_unavailable,
+    ),
+    "webfetch": ToolDef(
+        "Fetch content from a URL (stub — use web_search via the model's built-in search)",
+        {"url": "string"},
+        _stub_unavailable,
     ),
 }
 

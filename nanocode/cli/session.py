@@ -25,8 +25,9 @@ class SessionPayload:
 
     session_id: str
     model: str
-    agent: str
-    conversations: dict[str, list[dict]]
+    mode: str
+    skill: str | None
+    messages: list[dict]
 
 
 @dataclass
@@ -35,7 +36,8 @@ class SessionHeader:
 
     session_id: str
     model: str
-    agent: str
+    mode: str
+    skill: str | None
     message_count: int
     updated: str
 
@@ -44,9 +46,10 @@ class SessionHeader:
 class SessionData:
     """Output from ``load_session`` — full session state."""
 
-    conversations: dict[str, list[dict]]
+    messages: list[dict]
     model: str | None
-    agent: str | None
+    mode: str | None
+    skill: str | None
 
 
 def _ensure_sessions_dir() -> None:
@@ -65,8 +68,9 @@ def save_session(session: SessionPayload) -> None:
     payload = {
         "id": session.session_id,
         "model": session.model,
-        "agent": session.agent,
-        "conversations": session.conversations,
+        "mode": session.mode,
+        "skill": session.skill,
+        "messages": session.messages,
         "created_at": now,
         "updated_at": now,
     }
@@ -85,10 +89,26 @@ def load_session(session_id: str) -> SessionData:
         data = json.loads(content)
     except (json.JSONDecodeError, OSError) as e:
         raise RuntimeError(f"failed to load session '{session_id}': {e}") from e
+
+    # Migrate old format (keyed by agent) to new format (single messages list)
+    if "conversations" in data and "messages" not in data:
+        agent_id = data.get("agent", "coder")
+        msgs = data["conversations"].get(agent_id, [])
+        _all = list(data["conversations"].values())
+        if not msgs and _all:
+            msgs = _all[0]
+        return SessionData(
+            messages=msgs,
+            model=data.get("model"),
+            mode="build",
+            skill=agent_id,
+        )
+
     return SessionData(
-        conversations=data["conversations"],
+        messages=data.get("messages", []),
         model=data.get("model"),
-        agent=data.get("agent"),
+        mode=data.get("mode", "build"),
+        skill=data.get("skill"),
     )
 
 
@@ -106,11 +126,15 @@ def list_sessions() -> list[SessionHeader]:
             content = _fs.read_text(entry)
             data = json.loads(content)
             sid = data.get("id", entry.stem)
-            total_msgs = sum(len(v) for v in data.get("conversations", {}).values())
+            if "messages" in data:
+                total_msgs = len(data["messages"])
+            else:
+                total_msgs = sum(len(v) for v in data.get("conversations", {}).values())
             sessions.append(SessionHeader(
                 session_id=sid,
                 model=data.get("model", "?"),
-                agent=data.get("agent", "?"),
+                mode=data.get("mode", data.get("agent", "?")),
+                skill=data.get("skill"),
                 message_count=total_msgs,
                 updated=data.get("updated_at", "")[:19],
             ))
@@ -118,7 +142,8 @@ def list_sessions() -> list[SessionHeader]:
             sessions.append(SessionHeader(
                 session_id=entry.stem,
                 model="?",
-                agent="?",
+                mode="?",
+                skill=None,
                 message_count=0,
                 updated="",
             ))

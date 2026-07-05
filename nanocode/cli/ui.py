@@ -15,11 +15,11 @@ __all__ = [
     "RESET", "BOLD", "DIM", "BLACK", "RED", "GREEN", "YELLOW",
     "BLUE", "MAGENTA", "CYAN", "WHITE", "GRAY",
     "BG_RED", "BG_GREEN", "BG_BLUE",
-    "AGENT_COLORS", "AGENT_ICONS",
+
     "separator", "_hdr", "_ftr", "_mid", "_BOX", "_tw",
     "_spinner_start", "_spinner_stop",
     "_render_text_block", "render_markdown",
-    "print_help", "print_agents", "print_tool_call", "print_tool_result",
+    "print_help", "print_skills", "print_tool_call", "print_tool_result",
     "_recap_line", "endpoint_kind",
 ]
 
@@ -32,24 +32,6 @@ BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = (
 )
 GRAY = "\033[90m"
 BG_RED, BG_GREEN, BG_BLUE = "\033[41m", "\033[42m", "\033[44m"
-
-AGENT_COLORS: dict[str, str] = {
-    "coder": BLUE,
-    "architect": MAGENTA,
-    "reviewer": YELLOW,
-    "debugger": RED,
-    "tester": GREEN,
-    "refactor": CYAN,
-}
-
-AGENT_ICONS: dict[str, str] = {
-    "coder": "\u25c6",
-    "architect": "\u25c7",
-    "reviewer": "\u25cb",
-    "debugger": "\u25b3",
-    "tester": "\u25b7",
-    "refactor": "\u21bb",
-}
 
 # Force UTF-8 so box-drawing chars work on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -159,17 +141,17 @@ def render_markdown(text: str) -> str:
     return text
 
 
-def print_help(current_model: str, current_agent: str) -> None:
+def print_help(current_model: str, current_mode: str, current_skill: str | None) -> None:
     cmds = [
         ("/q, exit", "quit"),
         ("/c", "clear conversation"),
         ("/models", "fetch and list models"),
         ("/model", "show current model"),
         ("/model <n>", "switch model; clears conv"),
-        ("/agents", "list available agents"),
-        ("/agent", "show current agent"),
-        ("/agent <n>", "switch agent"),
-        ("/askall <p>", "send prompt to all agents"),
+        ("/plan", "switch to plan mode (read-only tools)"),
+        ("/build", "switch to build mode (full access)"),
+        ("/skills", "list available skills"),
+        ("/use <name>", "load a skill prompt"),
         ("/sessions", "list saved sessions"),
         ("/session", "show current session"),
         ("/session new", "start new session"),
@@ -181,19 +163,21 @@ def print_help(current_model: str, current_agent: str) -> None:
     for cmd, desc in cmds:
         print(f"{DIM}{_BOX['v']}{RESET} {BOLD}{cmd:<{cw}}{RESET} {GRAY}{desc}{RESET}")
     print(_ftr())
-    color = AGENT_COLORS.get(current_agent, "")
+    mode_color = GREEN if current_mode == "build" else YELLOW
+    skill_tag = f" \u00b7 {current_skill}" if current_skill else ""
     print(
         f"\n{GRAY}model{RESET}  {current_model} ({endpoint_kind(current_model)})"
-        f"  {GRAY}agent{RESET}  {color}{current_agent}{RESET}"
+        f"  {GRAY}mode{RESET}  {mode_color}{current_mode}{RESET}{skill_tag}"
     )
 
 
-def print_agents(current_agent: str) -> None:
-    for i, agent_id in enumerate(list(AGENT_FILES.keys()), 1):
-        marker = "*" if agent_id == current_agent else " "
-        color = AGENT_COLORS.get(agent_id, "")
-        icon = AGENT_ICONS.get(agent_id, " ")
-        line = f"{marker} {i:2}. {color}{icon} {agent_id}{RESET}"
+def print_skills(skills_list: list[str], current_skill: str | None, mode: str) -> None:
+    for i, skill_name in enumerate(skills_list, 1):
+        marker = "*" if skill_name == current_skill else " "
+        if marker == "*":
+            line = f"{marker} {i:2}. {BOLD}{skill_name}{RESET} (active)"
+        else:
+            line = f"{marker} {i:2}. {skill_name}"
         print(f"  {line}")
 
 
@@ -235,11 +219,12 @@ def print_tool_result(tool_name: str, tool_args: dict, result: ToolResult) -> No
     print(f"  {DIM}{_BOX['bl']} {preview}{RESET}")
 
 
-def _recap_line(model: str, agent: str, msg_count: int, elapsed: float) -> None:
-    color = AGENT_COLORS.get(agent, "")
+def _recap_line(model: str, mode: str, skill: str | None, msg_count: int, elapsed: float) -> None:
+    mode_color = GREEN if mode == "build" else YELLOW
+    skill_tag = f" \u00b7 {skill}" if skill else ""
     print(
-        f"\n{GRAY}{model} \u00b7 {color}{agent}{GRAY} \u00b7 {msg_count} msgs"
-        f" \u00b7 {elapsed:.1f}s{RESET}"
+        f"\n{GRAY}{model} \u00b7 {mode_color}{mode}{GRAY}{skill_tag}"
+        f" \u00b7 {msg_count} msgs \u00b7 {elapsed:.1f}s{RESET}"
     )
 
 

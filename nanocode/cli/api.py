@@ -104,8 +104,7 @@ def call_anthropic_api(messages: list, system_prompt: str, model: str, allowed_t
     return http_json(MESSAGES_URL, payload, headers)
 
 
-def run_openai_turn(messages: list, system_prompt: str, model: str, agent_id: str | None = None) -> tuple[bool, float]:
-    allowed_tools = AGENT_TOOLS.get(agent_id) if agent_id else None
+def run_openai_turn(messages: list, system_prompt: str, model: str, allowed_tools: set[str] | None = None) -> tuple[bool, float]:
     t0 = time.time()
     response = call_openai_api(messages, system_prompt, model, allowed_tools)
     choices = response.get("choices")
@@ -129,7 +128,7 @@ def run_openai_turn(messages: list, system_prompt: str, model: str, agent_id: st
         tool_name = function.get("name", "")
         tool_args = parse_tool_args(function.get("arguments"))
         print_tool_call(tool_name, tool_args)
-        result = run_tool(tool_name, tool_args, agent_id)
+        result = run_tool(tool_name, tool_args)
         print_tool_result(tool_name, tool_args, result)
         messages.append(
             {
@@ -142,8 +141,7 @@ def run_openai_turn(messages: list, system_prompt: str, model: str, agent_id: st
     return True, time.time() - t0
 
 
-def run_anthropic_turn(messages: list, system_prompt: str, model: str, agent_id: str | None = None) -> tuple[bool, float]:
-    allowed_tools = AGENT_TOOLS.get(agent_id) if agent_id else None
+def run_anthropic_turn(messages: list, system_prompt: str, model: str, allowed_tools: set[str] | None = None) -> tuple[bool, float]:
     t0 = time.time()
     response = call_anthropic_api(messages, system_prompt, model, allowed_tools)
     content_blocks = response.get("content", [])
@@ -157,7 +155,7 @@ def run_anthropic_turn(messages: list, system_prompt: str, model: str, agent_id:
             tool_name = block.get("name", "")
             tool_args = block.get("input", {})
             print_tool_call(tool_name, tool_args)
-            result = run_tool(tool_name, tool_args, agent_id)
+            result = run_tool(tool_name, tool_args)
             print_tool_result(tool_name, tool_args, result)
             tool_results.append(
                 {
