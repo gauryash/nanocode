@@ -1,5 +1,7 @@
 """Terminal UI helpers — colors, box-drawing, spinner, text rendering."""
 
+from __future__ import annotations
+
 import re
 import shutil
 import sys
@@ -7,6 +9,19 @@ import threading
 import time
 
 from nanocode.cli.config import AGENT_FILES
+from nanocode.cli.types import ToolResult, Ok, Err
+
+__all__ = [
+    "RESET", "BOLD", "DIM", "BLACK", "RED", "GREEN", "YELLOW",
+    "BLUE", "MAGENTA", "CYAN", "WHITE", "GRAY",
+    "BG_RED", "BG_GREEN", "BG_BLUE",
+    "AGENT_COLORS", "AGENT_ICONS",
+    "separator", "_hdr", "_ftr", "_mid", "_BOX", "_tw",
+    "_spinner_start", "_spinner_stop",
+    "_render_text_block", "render_markdown",
+    "print_help", "print_agents", "print_tool_call", "print_tool_result",
+    "_recap_line", "endpoint_kind",
+]
 
 # --- ANSI colors ---
 
@@ -18,7 +33,7 @@ BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = (
 GRAY = "\033[90m"
 BG_RED, BG_GREEN, BG_BLUE = "\033[41m", "\033[42m", "\033[44m"
 
-AGENT_COLORS = {
+AGENT_COLORS: dict[str, str] = {
     "coder": BLUE,
     "architect": MAGENTA,
     "reviewer": YELLOW,
@@ -27,7 +42,7 @@ AGENT_COLORS = {
     "refactor": CYAN,
 }
 
-AGENT_ICONS = {
+AGENT_ICONS: dict[str, str] = {
     "coder": "\u25c6",
     "architect": "\u25c7",
     "reviewer": "\u25cb",
@@ -42,7 +57,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # Detect if terminal supports Unicode box-drawing; fall back to ASCII
 _HAS_UNICODE = sys.stdout.encoding and sys.stdout.encoding.lower().startswith("utf")
-_BOX = {
+_BOX: dict[str, str] = {
     "tl": "╭" if _HAS_UNICODE else ".",
     "tr": "╮" if _HAS_UNICODE else ".",
     "bl": "╰" if _HAS_UNICODE else "'",
@@ -57,39 +72,36 @@ _BOX = {
 }
 
 
-def _tw():
+def _tw() -> int:
     return shutil.get_terminal_size((80, 20)).columns
 
 
-def _hdr(title, color=None):
-    """╭─ title ──────────────────────╮"""
+def _hdr(title: str, color: str | None = None) -> str:
     w = min(_tw(), 80)
     c = color or ""
-    inner = f"─ {title} "
+    inner = f"\u2500 {title} "
     return f"{DIM}{_BOX['tl']}{c}{inner}{DIM}{_BOX['h'] * max(1, w - len(inner) - 2)}{_BOX['tr']}{RESET}"
 
 
-def _ftr():
-    """╰──────────────────────────────╯"""
+def _ftr() -> str:
     w = min(_tw(), 80)
     return f"{DIM}{_BOX['bl']}{_BOX['h'] * max(1, w - 2)}{_BOX['br']}{RESET}"
 
 
-def _mid():
-    """├──────────────────────────────┤"""
+def _mid() -> str:
     w = min(_tw(), 80)
     return f"{DIM}{_BOX['ml']}{_BOX['h'] * max(1, w - 2)}{_BOX['ml']}{RESET}"
 
 
-def separator():
+def separator() -> str:
     w = min(_tw(), 80)
-    return f"{DIM}{'─' * w}{RESET}"
+    return f"{DIM}{'\u2500' * w}{RESET}"
 
 
 # --- spinner ---
 
 _spin = False
-_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER = "\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f"
 
 
 def _spin_thread():
@@ -120,8 +132,7 @@ def _spinner_stop():
 # --- text rendering ---
 
 
-def _render_text_block(text):
-    """Render model response with code-block fences styled."""
+def _render_text_block(text: str) -> str:
     lines = text.split("\n")
     out = []
     in_code = False
@@ -142,14 +153,13 @@ def _render_text_block(text):
     return "\n".join(out)
 
 
-def render_markdown(text):
-    """Bold **text** and inline `code`."""
+def render_markdown(text: str) -> str:
     text = re.sub(r"\*\*(.+?)\*\*", f"{BOLD}\\1{RESET}", text)
     text = re.sub(r"`([^`]+)`", f"{YELLOW}\\1{RESET}", text)
     return text
 
 
-def print_help(current_model, current_agent):
+def print_help(current_model: str, current_agent: str) -> None:
     cmds = [
         ("/q, exit", "quit"),
         ("/c", "clear conversation"),
@@ -178,17 +188,16 @@ def print_help(current_model, current_agent):
     )
 
 
-def print_agents(current_agent):
+def print_agents(current_agent: str) -> None:
     for i, agent_id in enumerate(list(AGENT_FILES.keys()), 1):
         marker = "*" if agent_id == current_agent else " "
         color = AGENT_COLORS.get(agent_id, "")
         icon = AGENT_ICONS.get(agent_id, " ")
         line = f"{marker} {i:2}. {color}{icon} {agent_id}{RESET}"
-        kind = AGENT_FILES.get(agent_id, "")
         print(f"  {line}")
 
 
-def print_tool_call(tool_name, tool_args):
+def print_tool_call(tool_name: str, tool_args: dict) -> None:
     values = list(tool_args.values()) if isinstance(tool_args, dict) else []
     arg_preview = str(values[0])[:70] if values else ""
     print(f"\n{_hdr(tool_name, GREEN)}")
@@ -197,10 +206,14 @@ def print_tool_call(tool_name, tool_args):
         print(_ftr())
 
 
-def print_tool_result(tool_name, tool_args, result):
-    """Print result — diff style for edits, inline for others."""
-    if tool_name == "edit" and result == "ok":
-        path = tool_args.get("path", "?")
+def print_tool_result(tool_name: str, tool_args: dict, result: ToolResult) -> None:
+    if isinstance(result, Err):
+        print(f"  {RED}\u2717 {result.message}{RESET}")
+        return
+
+    msg = result.message
+
+    if tool_name == "edit" and msg == "ok":
         old = tool_args.get("old", "")
         new = tool_args.get("new", "")
         old_line = old.split("\n")[0]
@@ -209,31 +222,28 @@ def print_tool_result(tool_name, tool_args, result):
             old_line = old_line[:57] + "..."
         if len(new_line) > 60:
             new_line = new_line[:57] + "..."
-        print(f"  {RED}− {GRAY}{old_line}{RESET}")
+        print(f"  {RED}\u2212 {GRAY}{old_line}{RESET}")
         print(f"  {GREEN}+ {GRAY}{new_line}{RESET}")
         return
-    if result.startswith("error:"):
-        print(f"  {RED}✗ {result[7:]}{RESET}")
-        return
-    result_lines = result.split("\n")
-    preview = result_lines[0][:60] if result_lines else "(empty)"
-    if len(result_lines) > 1:
-        preview += f" {DIM}… +{len(result_lines) - 1}{RESET}"
-    elif result_lines and len(result_lines[0]) > 60:
-        preview = preview[:57] + f"{DIM}…{RESET}"
+
+    msg_lines = msg.split("\n")
+    preview = msg_lines[0][:60] if msg_lines else "(empty)"
+    if len(msg_lines) > 1:
+        preview += f" {DIM}\u2026 +{len(msg_lines) - 1}{RESET}"
+    elif msg_lines and len(msg_lines[0]) > 60:
+        preview = preview[:57] + f"{DIM}\u2026{RESET}"
     print(f"  {DIM}{_BOX['bl']} {preview}{RESET}")
 
 
-def _recap_line(model, agent, msg_count, elapsed):
-    """Dim recap: model · agent · N messages · X.Xs"""
+def _recap_line(model: str, agent: str, msg_count: int, elapsed: float) -> None:
     color = AGENT_COLORS.get(agent, "")
     print(
-        f"\n{GRAY}{model} · {color}{agent}{GRAY} · {msg_count} msgs"
-        f" · {elapsed:.1f}s{RESET}"
+        f"\n{GRAY}{model} \u00b7 {color}{agent}{GRAY} \u00b7 {msg_count} msgs"
+        f" \u00b7 {elapsed:.1f}s{RESET}"
     )
 
 
-def endpoint_kind(model):
+def endpoint_kind(model: str) -> str:
     from nanocode.cli.config import ANTHROPIC_COMPAT_MODELS as ACM
 
     model = model.removeprefix("opencode-go/").strip()

@@ -143,7 +143,7 @@ class PermissionManager:
         Returns newline-separated paths or ``"none"``.
         """
         # The root must be inside the workspace
-        resolved_root = self._resolve(root, "read")
+        resolved_root = self._resolve(root)
         if not self._validator.is_inside_workspace(resolved_root):
             raise PermissionError(
                 f"Glob root {resolved_root} is outside the workspace. "
@@ -157,7 +157,7 @@ class PermissionManager:
 
         Returns newline-separated hits or ``"none"``.
         """
-        resolved_root = self._resolve(root, "read")
+        resolved_root = self._resolve(root)
         if not self._validator.is_inside_workspace(resolved_root):
             raise PermissionError(
                 f"Grep root {resolved_root} is outside the workspace."
@@ -212,7 +212,7 @@ class PermissionManager:
 
         Raises ``PermissionError`` if the user denies access.
         """
-        resolved = self._resolve(path, operation)
+        resolved = self._resolve(path)
 
         # Check: inside workspace?
         check = self._validator.check_access(resolved)
