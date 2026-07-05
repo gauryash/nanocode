@@ -172,12 +172,16 @@ def print_help(current_model: str, current_mode: str, current_skill: str | None)
 
 
 def print_skills(skills_list: list[str], current_skill: str | None, mode: str) -> None:
+    from nanocode.cli.config import SKILL_CATALOG
+
     for i, skill_name in enumerate(skills_list, 1):
         marker = "*" if skill_name == current_skill else " "
+        desc = SKILL_CATALOG.get(skill_name, "")
+        desc_fragment = f" {GRAY}\u2014 {desc[:70]}{'...' if len(desc) > 70 else ''}{RESET}" if desc else ""
         if marker == "*":
-            line = f"{marker} {i:2}. {BOLD}{skill_name}{RESET} (active)"
+            line = f"{marker} {i:2}. {BOLD}{skill_name}{RESET}{desc_fragment} {GREEN}(active){RESET}"
         else:
-            line = f"{marker} {i:2}. {skill_name}"
+            line = f"{marker} {i:2}. {skill_name}{desc_fragment}"
         print(f"  {line}")
 
 
@@ -221,9 +225,9 @@ def print_tool_result(tool_name: str, tool_args: dict, result: ToolResult) -> No
 
 def _recap_line(model: str, mode: str, skill: str | None, msg_count: int, elapsed: float) -> None:
     mode_color = GREEN if mode == "build" else YELLOW
-    skill_tag = f" \u00b7 {skill}" if skill else ""
+    skill_label = skill if skill else "no-skill"
     print(
-        f"\n{GRAY}{model} \u00b7 {mode_color}{mode}{GRAY}{skill_tag}"
+        f"\n{GRAY}{model} \u00b7 {mode_color}{mode}{GRAY} \u00b7 {skill_label}"
         f" \u00b7 {msg_count} msgs \u00b7 {elapsed:.1f}s{RESET}"
     )
 

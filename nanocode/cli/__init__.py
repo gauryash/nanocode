@@ -8,7 +8,7 @@ from pathlib import Path
 
 from nanocode.cli.config import (
     MODEL, AGENT_FILES, AGENT_TOOLS, SKILLS_DIR,
-    _fs,
+    SKILL_CATALOG, _fs,
 )
 from nanocode.cli.tools import init_permission_manager, TOOLS
 from nanocode.cli.types import Ok, Err
@@ -21,6 +21,7 @@ from nanocode.cli.ui import (
 )
 from nanocode.cli.api import (
     fetch_models, run_openai_turn, run_anthropic_turn,
+    classify_skill,
 )
 from nanocode.cli.session import (
     SessionPayload, SessionHeader,
@@ -34,6 +35,10 @@ __all__ = [
 ]
 
 _PLAN_TOOLS = {"read", "glob", "grep"}
+
+# Throttle state for skill auto-classification
+_last_classified_msg: str = ""
+_last_skill_classification: str | None = None
 
 
 def load_system_prompt() -> str:
@@ -78,6 +83,53 @@ def list_skills() -> list[str]:
     return sorted(AGENT_FILES.keys())
 
 
+def _classify_and_maybe_switch(
+    user_message: str,
+    current_model: str,
+    current_skill: str | None,
+) -> str | None:
+    """Check if the user's message suggests a different skill and switch if confident.
+
+    Returns the new skill name if switched, None if unchanged.
+    """
+    global _last_classified_msg, _last_skill_classification
+
+    if not SKILL_CATALOG:
+        return None
+
+    # Throttle: skip very short messages and repeated classifications
+    msg_stripped = user_message.strip()
+    if len(msg_stripped) < 10 or msg_stripped == _last_classified_msg:
+        return None
+
+    skill_name, confidence = classify_skill(msg_stripped, SKILL_CATALOG, current_model)
+    _last_classified_msg = msg_stripped
+
+    if not skill_name or confidence < 0.4:
+        _last_skill_classification = None
+        return None
+
+    if confidence < 0.7:
+        # Low confidence — show a dim hint, don't switch
+        _last_skill_classification = None
+        print(f"  {DIM}· hint:{RESET} {BOLD}{skill_name}{RESET} {DIM}({confidence:.0%} match · /use {skill_name} to activate){RESET}")
+        return None
+
+    if skill_name == current_skill:
+        _last_skill_classification = skill_name
+        return None
+
+    if skill_name in AGENT_FILES:
+        _last_skill_classification = skill_name
+        if confidence >= 0.8:
+            print(f"  {GREEN}=> Auto-switched to skill{RESET} {BOLD}{skill_name}{RESET} {GRAY}({confidence:.0%} match){RESET}")
+            return skill_name
+        print(f"  {YELLOW}=> Suggested skill{RESET} {BOLD}{skill_name}{RESET} {GRAY}({confidence:.0%} match) — use /use {skill_name} to switch{RESET}")
+        return None
+
+    return None
+
+
 def choose_skill(arg: str) -> str:
     """Resolve a skill name or number to a validated skill ID."""
     ids = list_skills()
@@ -117,14 +169,14 @@ def main() -> None:
     current_model = MODEL.removeprefix("opencode-go/").strip()
     model_cache: list[str] = []
     current_mode = "build"
-    current_skill: str | None = "coder"
+    current_skill: str | None = None
     messages: list[dict] = []
     session_id = _new_session_id()
 
     init_permission_manager()
 
     mode_color = GREEN if current_mode == "build" else YELLOW
-    skill_tag = f" \u00b7 {current_skill}" if current_skill else ""
+    skill_tag = f" \u00b7 {current_skill}" if current_skill else f" \u00b7 {DIM}no-skill{RESET}"
     header = (
         f"{BOLD}nanocode-go{RESET} {GRAY}\u00b7{RESET} "
         f"{DIM}{current_model} ({endpoint_kind(current_model)}){RESET} "
@@ -137,7 +189,8 @@ def main() -> None:
     print(f"{DIM}{_BOX['tl']}{_BOX['h'] * max(1, w - 2)}{_BOX['tr']}{RESET}")
     print(f"{DIM}{_BOX['v']}{RESET} {header}")
     print(f"{DIM}{_BOX['bl']}{_BOX['h'] * max(1, w - 2)}{_BOX['br']}{RESET}")
-    print(f"{DIM}  session {session_id}{RESET}\n")
+    n_skills = len(AGENT_FILES)
+    print(f"{DIM}  session {session_id}{RESET}  {GRAY}{n_skills} skills available · /skills to list{RESET}\n")
 
     while True:
         try:
@@ -217,9 +270,9 @@ def main() -> None:
                 continue
 
             if user_input == "/session":
-                skill_tag = f" \u00b7 skill: {current_skill}" if current_skill else ""
+                skill_label = current_skill if current_skill else f"{DIM}(none){RESET}"
                 print(f"  {GRAY}Session{RESET}  {BOLD}{session_id}{RESET}")
-                print(f"  {GRAY}Messages{RESET} {len(messages)}  {GRAY}Model{RESET} {current_model}  {GRAY}Mode{RESET} {current_mode}{skill_tag}")
+                print(f"  {GRAY}Messages{RESET} {len(messages)}  {GRAY}Model{RESET} {current_model}  {GRAY}Mode{RESET} {current_mode}  {GRAY}Skill{RESET} {skill_label}")
                 continue
 
             if user_input == "/session new":
@@ -267,7 +320,8 @@ def main() -> None:
             if user_input == "/plan":
                 if current_mode != "plan":
                     current_mode = "plan"
-                    print(f"  {YELLOW}\u25b6  Plan mode{RESET}  {GRAY}read-only tools (read, glob, grep){RESET}")
+                    skill_label = current_skill if current_skill else f"{DIM}no-skill{RESET}"
+                    print(f"  {YELLOW}\u25b6  Plan mode{RESET}  {GRAY}· {skill_label} · read-only tools (read, glob, grep){RESET}")
                 else:
                     print(f"  {GRAY}Already in plan mode{RESET}")
                 continue
@@ -275,8 +329,8 @@ def main() -> None:
             if user_input == "/build":
                 if current_mode != "build":
                     current_mode = "build"
-                    skill_tag = f" \u00b7 {current_skill}" if current_skill else ""
-                    print(f"  {GREEN}\u25b6  Build mode{RESET}{skill_tag}")
+                    skill_label = current_skill if current_skill else f"{DIM}no-skill{RESET}"
+                    print(f"  {GREEN}\u25b6  Build mode{RESET}  {GRAY}· {skill_label}{RESET}")
                 else:
                     print(f"  {GRAY}Already in build mode{RESET}")
                 continue
@@ -300,6 +354,12 @@ def main() -> None:
                 except ValueError as e:
                     print(f"  {RED}\u2717 {e}{RESET}")
                 continue
+
+            # Auto-classify skill from the user message (works in plan + build)
+            switched = _classify_and_maybe_switch(user_input, current_model, current_skill)
+            if switched:
+                current_skill = switched
+                mode_color = GREEN if current_mode == "build" else YELLOW
 
             messages.append({"role": "user", "content": user_input})
             system_prompt = build_system_prompt(current_skill)

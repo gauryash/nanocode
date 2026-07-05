@@ -1,12 +1,17 @@
-"""Dynamic skill discovery from a flat ``skills/`` directory.
+"""Skill file discovery + catalog-driven index.
 
-Scans ``.md`` files, parses YAML frontmatter, and produces the dicts
-that ``config.py`` previously hardcoded (``AGENT_FILES``, ``AGENT_TOOLS``).
+Two sources:
+  1. **Catalog** (``agent-skills.md``) — the single source of truth for
+     skill names and descriptions (extracted via ``catalog.py``).
+  2. **Recursive file scan** — finds every ``.md`` under ``skills/`` to
+     build ``{skill_name → relative_path}``.
+
+The catalog drives LLM classification; the file map loads the prompt.
 """
 
 from __future__ import annotations
 
-import os
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -15,6 +20,7 @@ from nanocode.cli.frontmatter import parse_frontmatter
 __all__ = [
     "SkillMeta",
     "discover_skills",
+    "discover_skill_files",
     "build_skill_config",
     "resolve_skill_path",
     "NATIVE_TOOLS",
@@ -32,6 +38,9 @@ _TOOL_ALIASES: Dict[str, str] = {
 
 # Tools that are just shell commands (available via bash) — silently dropped
 _DROPPED_TOOLS: Set[str] = {"ls"}
+
+# Matches ``# Title`` at the start of a file
+_H1_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
 
 
 class SkillMeta:
@@ -52,6 +61,14 @@ class SkillMeta:
         self.filename = filename
         self.tools = tools
         self.raw_metadata = raw_metadata
+
+
+def _name_from_h1(content: str) -> str | None:
+    """Extract a hyphen-case name from the first ``# Title`` line."""
+    m = _H1_RE.search(content)
+    if not m:
+        return None
+    return m.group(1).strip().lower().replace(" ", "-")
 
 
 def _normalise_tools(raw: Optional[str]) -> Set[str]:
@@ -106,6 +123,94 @@ def discover_skills(skills_dir: str) -> List[SkillMeta]:
         ))
 
     return skills
+
+
+def _potential_names(md_file: Path, content: str) -> list[str]:
+    """Generate all plausible skill names for a file, most-specific first."""
+    names: list[str] = []
+    meta, _ = parse_frontmatter(content)
+
+    fn = meta.get("name")
+    if fn:
+        names.append(fn)
+
+    h1 = _name_from_h1(content)
+    if h1 and h1 != fn:
+        names.append(h1)
+
+    if md_file.name.lower() == "skill.md":
+        parent = md_file.parent.name
+        if parent != fn and parent != h1:
+            names.append(parent)
+
+    stem = md_file.stem
+    if stem != fn and stem != h1:
+        names.append(stem)
+
+    return names
+
+
+def _is_skill_file(md_file: Path) -> bool:
+    """Heuristic: is this ``.md`` file an actual skill (not a reference/README)?"""
+    name_lower = md_file.name.lower()
+
+    # Explicit non-skills
+    if name_lower in ("readme.md", "index.md", "changelog.md", "summary.md"):
+        return False
+
+    parts_lower = [p.lower() for p in md_file.parts]
+
+    # Files inside ``references/`` or ``resources/`` dirs are supporting docs
+    if "references" in parts_lower or "resources" in parts_lower:
+        return False
+
+    # SKILL.md is always a skill
+    if name_lower == "skill.md":
+        return True
+
+    # Files inside commands/ or agents/ directories
+    parent_lower = md_file.parent.name.lower()
+    if parent_lower in ("commands", "agents"):
+        return True
+
+    # Files directly inside a plugin directory (skills/<plugin>/<file>.md)
+    # are potential skills iff they have frontmatter.
+    # Check depth: should be at skills/<plugin>/<file>.md (3 parts from root)
+    # or deeper in subdirs we haven't caught above
+    if len(md_file.parts) >= 3:
+        for i, p in enumerate(parts_lower):
+            if p == "skills" and i + 2 < len(parts_lower):
+                return True
+
+    return False
+
+
+def discover_skill_files(skills_dir: str) -> Dict[str, str]:
+    """Recursively walk ``skills/`` and map ``{skill_name → relative_path}``.
+
+    Only indexes files that look like real skills (not references/READMEs).
+    Each file is indexed under **all** plausible names (frontmatter ``name``,
+    H1-derived, parent directory for ``SKILL.md``, file stem).  The first
+    file to claim a name wins.
+    """
+    mapping: Dict[str, str] = {}
+    root = Path(skills_dir)
+
+    if not root.is_dir():
+        return mapping
+
+    for md_file in sorted(root.rglob("*.md")):
+        if not _is_skill_file(md_file):
+            continue
+
+        rel = md_file.relative_to(root)
+        content = md_file.read_text(encoding="utf-8")
+
+        for name in _potential_names(md_file, content):
+            if name and name not in mapping:
+                mapping[name] = str(rel.as_posix())
+
+    return mapping
 
 
 def _dedup_name(s: SkillMeta, used: Set[str]) -> str:

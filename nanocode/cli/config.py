@@ -10,7 +10,8 @@ import os
 from pathlib import Path
 
 from nanocode.permission.fs_wrapper import FileSystemWrapper
-from nanocode.cli.skill_loader import discover_skills, build_skill_config
+from nanocode.cli.catalog import load_catalog, SKILL_CATALOG
+from nanocode.cli.skill_loader import discover_skills, discover_skill_files, build_skill_config, NATIVE_TOOLS
 
 __all__ = [
     "_fs", "_get_api_key",
@@ -19,6 +20,7 @@ __all__ = [
     "SESSIONS_DIR", "SYSTEM_PROMPT_PATH",
     "SKILLS_DIR",
     "AGENT_FILES", "AGENT_TOOLS", "ANTHROPIC_COMPAT_MODELS",
+    "SKILL_CATALOG",
     "_PACKAGE_DIR",
 ]
 
@@ -90,12 +92,47 @@ SYSTEM_PROMPT_PATH = os.environ.get(
     str(_PACKAGE_DIR / "system.md"),
 )
 
-SKILLS_DIR = os.environ.get("SKILLS_DIR", "skills")
+# Priority: SKILLS_DIR env var > CWD skills/ > bundled package skills
+_BUNDLED_SKILLS = str(_PACKAGE_DIR / "skills")
+_CWD_SKILLS = os.path.join(os.getcwd(), "skills")
+SKILLS_DIR = (
+    os.environ.get("SKILLS_DIR")
+    or (_CWD_SKILLS if os.path.isdir(_CWD_SKILLS) else _BUNDLED_SKILLS)
+)
 
+# --- Catalog (from agent-skills.md) → skill_name : description ---
+_catalog_path = Path(SKILLS_DIR) / "agent-skills.md"
+if _catalog_path.is_file():
+    try:
+        SKILL_CATALOG.update(load_catalog(_catalog_path))
+    except Exception:
+        pass  # Non-fatal — skills still work, just without descriptions
+
+# --- File discovery (recursive) → skill_name : relative_path ---
+_skill_files = discover_skill_files(SKILLS_DIR)
+
+# --- Merge: build AGENT_FILES from catalog names + discovered files ---
+AGENT_FILES: dict[str, str] = {}
+AGENT_TOOLS: dict[str, set[str]] = {}
+
+# Match catalog names to discovered files
+for name in SKILL_CATALOG:
+    path = _skill_files.get(name)
+    if path:
+        AGENT_FILES[name] = path
+    # else: catalog entry without a matching file — skip (can't load the prompt)
+
+# Every skill gets the full native tool set by default
+for name in AGENT_FILES:
+    AGENT_TOOLS[name] = set(NATIVE_TOOLS)
+
+# Also run legacy flat discover for backward compat (frontmatter tools)
 _skills = discover_skills(SKILLS_DIR)
-AGENT_FILES: dict[str, str]
-AGENT_TOOLS: dict[str, set[str]]
-AGENT_FILES, AGENT_TOOLS = build_skill_config(_skills)
+_legacy_files, _legacy_tools = build_skill_config(_skills)
+# Legacy tool restrictions override the default full set
+for name, tools in _legacy_tools.items():
+    if name in AGENT_TOOLS:
+        AGENT_TOOLS[name] = tools
 
 ANTHROPIC_COMPAT_MODELS: set[str] = {
     "minimax-m3",

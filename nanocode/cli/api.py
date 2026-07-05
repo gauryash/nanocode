@@ -7,6 +7,7 @@ before being used in any logic or rendering.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -27,6 +28,7 @@ __all__ = [
     "fetch_models",
     "call_openai_api", "call_anthropic_api",
     "run_openai_turn", "run_anthropic_turn",
+    "classify_skill",
 ]
 
 
@@ -172,3 +174,112 @@ def run_anthropic_turn(messages: list, system_prompt: str, model: str, allowed_t
 
     messages.append({"role": "user", "content": tool_results})
     return True, time.time() - t0
+
+
+# ---------------------------------------------------------------------------
+# Skill classification — matches a user message against the skill catalog
+# ---------------------------------------------------------------------------
+
+_CLASSIFY_SYSTEM_PROMPT = """You are a skill classifier. Given a user message and a list of available skills, select the single best-matching skill. Respond with a JSON object only:
+
+{"skill": "skill-name", "confidence": 0.0-1.0}
+
+Rules:
+- "skill" must be one of the listed skill names (exact match), or null if none match well.
+- "confidence" is your certainty: 1.0 = perfect match, 0.0 = no match.
+- Only suggest a skill if the user's request clearly falls in its domain.
+- Be precise — don't guess. Return null if unsure."""
+
+
+def _keyword_prefilter(user_message: str, catalog: dict[str, str], top_n: int = 30) -> dict[str, str]:
+    """Quick keyword match to narrow the candidate pool before the LLM call."""
+    words = set()
+    for w in re.findall(r"[a-zA-Z_][a-zA-Z_0-9]{2,}", user_message):
+        words.add(w.lower())
+    if not words:
+        return dict(list(catalog.items())[:top_n])
+
+    scored: list[tuple[int, str, str]] = []
+    for name, desc in catalog.items():
+        score = 0
+        name_lower = name.lower()
+        desc_lower = desc.lower()
+        for w in words:
+            if w in name_lower:
+                score += 3
+            elif w in desc_lower:
+                score += 1
+        if score > 0:
+            scored.append((score, name, desc))
+
+    scored.sort(key=lambda x: -x[0])
+    return {name: desc for _, name, desc in scored[:top_n]}
+
+
+def classify_skill(
+    user_message: str,
+    catalog: dict[str, str],
+    model: str,
+) -> tuple[str | None, float]:
+    """Ask the LLM which skill best matches *user_message*.
+
+    Returns ``(skill_name, confidence)`` or ``(None, 0.0)``.
+    """
+    if not catalog or not user_message:
+        return None, 0.0
+
+    candidates = _keyword_prefilter(user_message, catalog)
+    if not candidates:
+        return None, 0.0
+
+    skills_block = "\n".join(f"- {name}: {desc}" for name, desc in candidates.items())
+    user_payload = (
+        f"Candidate skills:\n{skills_block}\n\n"
+        f"User message: {user_message}"
+    )
+
+    payload = {
+        "model": model.removeprefix("opencode-go/").strip(),
+        "max_tokens": 100,
+        "messages": [
+            {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_payload},
+        ],
+    }
+
+    kind = "anthropic" if (model in _anthropic_compat() or model.startswith("minimax-") or model.startswith("qwen")) else "openai"
+
+    try:
+        if kind == "anthropic":
+            payload["system"] = payload["messages"].pop(0)["content"]
+            payload["messages"] = payload["messages"]
+            response = http_json(MESSAGES_URL, payload, auth_headers(require_key=True, extra={"anthropic-version": "2023-06-01"}))
+            content_blocks = response.get("content", [])
+            raw = ""
+            for block in content_blocks:
+                if block.get("type") == "text":
+                    raw = block.get("text", "")
+                    break
+        else:
+            response = http_json(CHAT_COMPLETIONS_URL, payload, auth_headers(require_key=True))
+            choices = response.get("choices")
+            raw = choices[0].get("message", {}).get("content", "") if isinstance(choices, list) and choices else ""
+
+        if not raw:
+            return None, 0.0
+
+        data = json.loads(raw.strip())
+        skill = data.get("skill")
+        confidence = float(data.get("confidence", 0.0))
+        if skill and skill in catalog:
+            return skill, confidence
+        return None, 0.0
+
+    except Exception:
+        return None, 0.0
+
+
+def _anthropic_compat() -> set[str]:
+    """Lazy import to avoid circular dependency."""
+    from nanocode.cli.config import ANTHROPIC_COMPAT_MODELS
+    return ANTHROPIC_COMPAT_MODELS

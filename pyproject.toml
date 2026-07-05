@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 [tool.setuptools.package-data]
-nanocode = ["system.md"]
+nanocode = ["system.md", "skills/**/*.md"]
 
 [project.scripts]
 nanocode = "nanocode.cli:main"
