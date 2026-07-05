@@ -7,7 +7,7 @@ from typing import Callable, NamedTuple
 
 from nanocode.permission import PermissionManager
 from nanocode.cli.config import AGENT_TOOLS
-from nanocode.cli.ui import DIM, GRAY, RESET, _BOX
+from nanocode.cli.ui import DIM, RESET, _BOX
 from nanocode.cli.types import ToolResult, Ok, Err
 
 __all__ = [

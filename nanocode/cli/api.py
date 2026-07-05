@@ -14,7 +14,7 @@ import urllib.request
 
 from nanocode.cli.config import (
     MODELS_URL, CHAT_COMPLETIONS_URL, MESSAGES_URL,
-    MAX_TOKENS, HTTP_TIMEOUT, AGENT_TOOLS, _get_api_key,
+    MAX_TOKENS, HTTP_TIMEOUT, _get_api_key,
 )
 from nanocode.cli.tools import make_openai_schema, make_anthropic_schema, run_tool, parse_tool_args
 from nanocode.cli.types import Ok, Err

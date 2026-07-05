@@ -7,7 +7,7 @@ Expects ``---`` delimited blocks at the start of a file, with flat
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 __all__ = ["parse_frontmatter"]
 

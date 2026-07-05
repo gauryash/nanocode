@@ -254,7 +254,7 @@ class PermissionManager:
         print()
         print("\033[2m╭─ \033[1m\033[33mShell Command — External Path Reference\033[0m\033[2m ─────────────────────────────────╮\033[0m")
         print("\033[2m│\033[0m")
-        print(f"\033[2m│\033[0m  This command may reference paths outside the workspace:")
+        print("\033[2m│\033[0m  This command may reference paths outside the workspace:")
         print("\033[2m│\033[0m")
         print(f"\033[2m│\033[0m  \033[36m{command[:70]}\033[0m")
         if reason:

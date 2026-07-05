@@ -11,12 +11,11 @@ from nanocode.cli.config import (
     SKILL_CATALOG, _fs,
 )
 from nanocode.cli.tools import init_permission_manager, TOOLS
-from nanocode.cli.types import Ok, Err
 from nanocode.cli.ui import (
-    BOLD, DIM, GRAY, GREEN, YELLOW, RED, BLUE, CYAN, WHITE, BG_RED, RESET,
+    BOLD, DIM, GRAY, GREEN, YELLOW, RED, BLUE, WHITE, BG_RED, RESET,
     _hdr, _ftr, _BOX,
     _tw, separator, _recap_line,
-    _render_text_block, print_help, print_skills,
+    print_help, print_skills,
     endpoint_kind,
 )
 from nanocode.cli.api import (
@@ -24,7 +23,7 @@ from nanocode.cli.api import (
     classify_skill,
 )
 from nanocode.cli.session import (
-    SessionPayload, SessionHeader,
+    SessionPayload,
     _new_session_id, save_session, load_session, list_sessions,
     _resolve_session_id,
 )
@@ -145,8 +144,6 @@ def choose_skill(arg: str) -> str:
 
 def choose_model(arg: str, model_cache: list[str]) -> str:
     """Resolve a model name or number to a validated model ID."""
-    from nanocode.cli.config import ANTHROPIC_COMPAT_MODELS
-
     arg = arg.removeprefix("opencode-go/").strip()
     if not model_cache:
         try:

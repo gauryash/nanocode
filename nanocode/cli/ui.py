@@ -8,8 +8,7 @@ import sys
 import threading
 import time
 
-from nanocode.cli.config import AGENT_FILES
-from nanocode.cli.types import ToolResult, Ok, Err
+from nanocode.cli.types import ToolResult, Err
 
 __all__ = [
     "RESET", "BOLD", "DIM", "BLACK", "RED", "GREEN", "YELLOW",
@@ -77,7 +76,7 @@ def _mid() -> str:
 
 def separator() -> str:
     w = min(_tw(), 80)
-    return f"{DIM}{'\u2500' * w}{RESET}"
+    return f"{DIM}{chr(0x2500) * w}{RESET}"
 
 
 # --- spinner ---

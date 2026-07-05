@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import secrets
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from nanocode.cli.config import _fs, SESSIONS_DIR, AGENT_FILES
+from nanocode.cli.config import _fs, SESSIONS_DIR
 from nanocode.cli.ui import YELLOW, RESET
 
 __all__ = [
