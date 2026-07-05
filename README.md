@@ -151,6 +151,21 @@ nanocode-go | deepseek-v4-flash (openai) | coder | /home/user/project
 > There's one Python file: nanocode.py
 ```
 
+## Pre-commit secret scanning
+
+A pre-commit hook is provided to scan staged changes for accidentally committed secrets (API keys, tokens, private keys):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+To scan manually at any time:
+
+```bash
+python scripts/scan-secrets.py        # staged changes only
+python scripts/scan-secrets.py --all  # entire repository
+```
+
 ## License
 
 MIT

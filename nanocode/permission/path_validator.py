@@ -24,7 +24,7 @@ SENSITIVE_PATTERNS = [
     ".npmrc",
     ".dockercfg",
     ".docker/config.json",
-    "config.json",       # often has API keys in .nanocode
+    ".nanocode/config.json",  # has API keys in .nanocode
 ]
 
 
@@ -96,11 +96,6 @@ class PathValidator:
     def is_sensitive_path(self, resolved: Path) -> bool:
         """Return True if *resolved* matches a known sensitive-file pattern."""
         return self._is_sensitive_path(resolved)
-
-    def is_symlink_escape(self, resolved: Path) -> bool:
-        """Return True if the resolved path is a symlink that points outside
-        the workspace root.  Relies on the caller having resolved symlinks."""
-        return not self.is_inside_workspace(resolved)
 
     # ------------------------------------------------------------------
     # Internal helpers

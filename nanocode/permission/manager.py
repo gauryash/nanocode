@@ -31,7 +31,7 @@ _TRAVERSAL_PATTERNS = re.compile(
     r'([a-zA-Z]:\\|\\\\|\.\.\\|/|\.\./)'
 )
 
-_SENSITIVE_REF_PATTERNS = re.compile(
+_SENSITIVE_REF_PATTERN = re.compile(
     r'(?:~[/\\])?(?:\.ssh|\.aws|\.gcp|\.config|\.kube|AppData|Application Data|'
     r'Users[/\\]\w+[/\\]|home[/\\]\w+[/\\])'
 )
@@ -188,7 +188,7 @@ class PermissionManager:
             return "(denied: command matches a destructive pattern and was blocked)"
 
         # Best-effort check for external path references
-        if _TRAVERSAL_PATTERNS.search(command) or _SENSITIVE_REF_PATTERNS.search(command):
+        if _TRAVERSAL_PATTERNS.search(command) or _SENSITIVE_REF_PATTERN.search(command):
             decision = self._prompt_external_command(command, reason)
             if decision == PermissionPrompt.DENY:
                 return "(denied: command references paths outside the workspace)"
@@ -199,7 +199,7 @@ class PermissionManager:
     # Authorization internals
     # ------------------------------------------------------------------
 
-    def _resolve(self, path: str, operation: str = "read") -> Path:
+    def _resolve(self, path: str) -> Path:
         """Resolve *path* to canonical form.  Raises ``PermissionError`` on
         obvious traversal."""
         resolved = self._validator.resolve(path)
@@ -279,11 +279,4 @@ class PermissionManager:
                 return PermissionPrompt.DENY
             print("\033[2m│\033[0m  \033[31mInvalid choice.\033[0m")
 
-    # ------------------------------------------------------------------
-    # Workspace migration / validation helpers
-    # ------------------------------------------------------------------
 
-    @staticmethod
-    def from_cwd() -> "PermissionManager":
-        """Factory: create a PermissionManager using the current working directory."""
-        return PermissionManager(Path.cwd())
